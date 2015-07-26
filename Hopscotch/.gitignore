@@ -1,0 +1,4 @@
+#Normal rule
+*.o
+*.o.*
+*.a
