@@ -1,3 +1,50 @@
+/*   Hopscotch  hash table provides a simple hash table implementation that resolves hash collisions with
+       linear probing from the initial hash entry up to log(n) entries ahead, where n is the  size  of  the
+       hash table.
+
+       Usage of this structure needs evaluating the hash values of the elements before insertion. The func‐
+       tions always treats the hash values modulo T->n.
+
+       These hash tables are useful when the values to be stored fit in uint.  With larger entries you  are
+       better  off using normal hash tables with linked list buckets, which is then fast enough and simpler
+       to implement.  With integer entries these tables have the following advantages:
+
+       1)     Memory locality and compactness and thus cache efficiency.
+
+       2)     Serialization. The table is contained in the arrays A and V.
+
+       3)     Concurrency by dividing the array into segments each with locks, though  this  has  not  been
+              implemented here.
+
+       HHash  is  a  stucture for the hash table, where H is the array of hops and V is an array containing
+       the values stored in the table. Zero values are considered empty  slots  and  thus  zero  cannot  be
+       inserted into the table. Each entry in H is a bitmap such that if for a hash value h the bit at i is
+       set the element V[h+i] also has the same hash value. Also m is the number of elements stored in  the
+       table, n is the size of the arrays H and V.  k is the integer logarithm in base 2 of n.  Hhashnew(n)
+       allocates memory for a hash table with capacity n and hhashfree frees it.
+
+       The elements of the hash table are referenced by their hash value and offset. For a hash value h the
+       elements with this hash value have offsets 0 <= i < T->k.  Hhashsucc(T,h,i) returns the successor of
+       the element at V[h+i].  If the element V[h+i] has the hash value h hhashsucc returns i, and  if  not
+       it  returns  the  next  largest i < T->k such that V[h+i] has the hash value h.  If no such i exists
+       hhashsucc returns a negative value. Thus V[h+i] for any i does not necessarily have the  hash  value
+       h.  Hhashsucc can be used for both checking if an element is contained in the table as well as iter‐
+       ating over the elements with the same hash value.
+
+       Hhashput(T,h,x) tries to insert the element x with hash value h into the  table  T.   On  successful
+       addition  it  returns  a  non-zero value and zero otherwise.  If an attempt to add an element is not
+       successful the table should be resized, x is not added to the table, but  some  other  modifications
+       may have taken place. No operation has been provided here for resizing but one can simple allocate a
+       new table with a larger size and copy all values from the current table into the new one. Note, try‐
+       ing  to insert zero will not succeed. This is considered semantically correct behaviour as after the
+       insertion zero will not be found from the table by hhsucc.
+
+       Hhashdel(T,h,i) removes the element at V[h+i] provided that V[h+i] has the hash value h and 0 <= i <
+       T->k, if not hhashdel does nothing.
+
+*/
+
+
 #include <stdlib.h>
 #include "hhash.h"
 #include "mach.c"
