@@ -48,6 +48,7 @@
 #include <stdlib.h>
 #include "hhash.h"
 #include "mach.c"
+#include "lookup.c"      
 
 #define mod(x, n) ((x) < (n) ? (x) : (x) - (n))
 
