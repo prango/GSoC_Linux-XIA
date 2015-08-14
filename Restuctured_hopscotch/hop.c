@@ -5,7 +5,7 @@
 
 #define XIP_VXT_TABLE_SIZE	64 //size
 #define HOP_RANGE = 32;
-#define ADD_RANGE = 256;
+#define ADD_RANGE = 256; //geeting the full alphabet space for hexadecimal
 
 int BUSY=656565;
 
@@ -16,7 +16,7 @@ int BUSY=656565;
     int timestamp;
     unsigned in hop_info;
     int lock;
-    
+
 };
 */
 struct Bucket{
@@ -29,18 +29,18 @@ struct Bucket{
 
 };
 
-
+//defininga new bucket
 struct Bucket * B;
 
-
+//intializing the fuction
 int contains(int);
 void resize();
 void find_closer_bucket(struct Bucket **,int *);
 
-
+//lock and unlock mechanism  , it locks the bucket when to oprations try to acces the same mmemory location
 void lock(struct Bucket * bucket){
 
-    
+
     while (1){
         if (!bucket->lock){
             if(!__sync_lock_test_and_set(&(bucket->lock),1)) break;
@@ -52,22 +52,24 @@ void unlock(struct Bucket * bucket){
 
     bucket->lock = 0;
 }
-
+/* modular hash fuction , TODO :change it to exist hash families */
 static int hash_fuction(int key){
     return (key%size) ;
 }
 
 //printf("%d",hash_fuction(key));
+//Defined fuction adds the xid_type variable in the bucket ,contrust the bicket structure.and lockes it,
+//fuctionn containd checks the bucket for the same entry , `flag` varible here check the lock state og the bucket structure.
 
-static int add(int key,int data,int reentrant){
-    
+static int add(int key,int data,int flag){
+
     //int hash=key%size;
     int hash = hash_fuction(key);
     struct Bucket * start_bucket = &B[hash];
-    if (reentrant) lock(start_bucket);
-    
+    if (flag) lock(start_bucket);
+
     if(contains(key)){
-        if (reentrant) unlock(start_bucket);
+        if (flag) unlock(start_bucket);
         return 0;
     }
 
@@ -80,26 +82,29 @@ static int add(int key,int data,int reentrant){
         temp_hash++;
         free_bucket=&B[temp_hash]; //danger
      }
-    
-    if( free_distance <ADD_RANGE){
+
+    if( free_distance <ADD_RANGE)
+    {
         do{
-            if  (free_distance <HOP_RANGE){
-                start_bucket->hop_info |=(1<< free_distance);
-                free_bucket->data = data;
-                free_bucket->key = key;
-                if(reentrant) unlock(start_bucket);
+            if  (free_distance <HOP_RANGE)
+            {
+                start_bucket->hop_info |=(1<< free_distance); // update the hop_info
+                free_bucket->data = data; // update the data with added value
+                free_bucket->key = key; // update key value
+                if(flag) unlock(start_bucket); // unlock the locked structure
                 return 1;
              }
              find_closer_bucket(&free_bucket,&free_distance);
          }while( NULL!= free_bucket);
     }
-    if(reentrant)unlock(start_bucket);
+
+    if(flag)unlock(start_bucket);
     resize();
     return add(key,data,0);
 }
 
 
-
+//check for the closest vacant space in the  bucket length
 static void find_closer_bucket(struct Bucket **free_bucket, int * free_distance){
 
 
@@ -137,7 +142,7 @@ static void find_closer_bucket(struct Bucket **free_bucket, int * free_distance)
         }
         move_bucket++;
     }
-    *free_bucket = NULL; 
+    *free_bucket = NULL;
     *free_distance =0;
 
 
@@ -145,25 +150,26 @@ static void find_closer_bucket(struct Bucket **free_bucket, int * free_distance)
 
 
 static void resize(){
-    //TODO: fill
+    //TODO: fill Contruct
     printf(" @resize \n");
 }
 
+//check the value exits in the bucket list 
 int contains(int key){
-    
+
     int hash=key%size;
     struct Bucket * start_bucket  = &B[hash];
 
     int try_counter = 0;
     int timestamp;
 
-    //TODO:include the fast path too
+    //TODO:include the fast path too , fast contains
 
     int i;
     int temp_hash=hash;
     struct Bucket * check_bucket = start_bucket;
     for(i=0;i<HOP_RANGE;++i){
-        
+
         if(key == (check_bucket->key))
             return 1;
         temp_hash++;
@@ -177,7 +183,7 @@ int main(int argc, char * argv[]){
 
 
     B=(struct Bucket *)malloc(sizeof(struct Bucket)*2048);
-    
+
     //add(12,45,1);
     //add(13,47,1);
     //add(512+12,49,1);
