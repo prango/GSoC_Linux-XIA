@@ -1,46 +1,43 @@
 #include<stdio.h>
 #include<stdlib.h>
-#include<net/xia.h>
+#include <linux/kernel.h>
+//#include <linux/sockets.h>
+#include <asm/byteorder.h>
+/*#include "lookup3.c" //custum hash fuctions*/
 
+int BUSY=-1;
+typedef __be32 xid_type_t;
 
-#define XIP_VXT_TABLE_SIZE	64 //size
-#define HOP_RANGE = 32;
-#define ADD_RANGE = 256; //geeting the full alphabet space for hexadecimal
-
-int BUSY=656565;
-
-/*Virtual XID type / buckets */
-/*struct xip_vxt_entry {
-    xid_type_t	xid_type;
-    int index;
-    int timestamp;
-    unsigned in hop_info;
-    int lock;
-
-};
-*/
-struct Bucket{
+struct xip_vxt_entry{
 
     int key;
-    int data;
+    xid_type_t xid_type;
     int timestamp;
     unsigned int hop_info;
     int lock;
 
 };
 
-//defininga new bucket
-struct Bucket * B;
 
-//intializing the fuction
+struct xip_vxt_entry * B;
+
+int size=512;
+int HOP_RANGE = 32;
+int ADD_RANGE = 256;
+
+
+int Hash_Value(int);
 int contains(int);
 void resize();
-void find_closer_bucket(struct Bucket **,int *);
+void find_closer_bucket(struct xip_vxt_entry **,int *);
 
-//lock and unlock mechanism  , it locks the bucket when to oprations try to acces the same mmemory location
-void lock(struct Bucket * bucket){
+/*static unsigned int Hash_Value(xid_type_t ty){
+ return hash=((__be32_to_cpu(ty) & (size-1));
+ } 
+*/
+void lock(struct xip_vxt_entry * bucket){
 
-
+    
     while (1){
         if (!bucket->lock){
             if(!__sync_lock_test_and_set(&(bucket->lock),1)) break;
@@ -48,32 +45,26 @@ void lock(struct Bucket * bucket){
     }
 }
 
-void unlock(struct Bucket * bucket){
+void unlock(struct xip_vxt_entry * bucket){
 
     bucket->lock = 0;
 }
-/* modular hash fuction , TODO :change it to exist hash families */
-static int hash_fuction(int key){
-    return (key%size) ;
-}
 
-//printf("%d",hash_fuction(key));
-//Defined fuction adds the xid_type variable in the bucket ,contrust the bicket structure.and lockes it,
-//fuctionn containd checks the bucket for the same entry , `flag` varible here check the lock state og the bucket structure.
+//int hash_fuction(int ty)
 
-static int add(int key,int data,int flag){
 
-    //int hash=key%size;
-    int hash = hash_fuction(key);
-    struct Bucket * start_bucket = &B[hash];
-    if (flag) lock(start_bucket);
-
+int add(int key,xid_type_t xid_type,int reentrant){
+    
+    int hash=key%size;
+    struct xip_vxt_entry * start_bucket = &B[hash];
+    if (reentrant) lock(start_bucket);
+    
     if(contains(key)){
-        if (flag) unlock(start_bucket);
+        if (reentrant) unlock(start_bucket);
         return 0;
     }
 
-    struct Bucket * free_bucket = start_bucket;
+    struct xip_vxt_entry * free_bucket = start_bucket;
     int free_distance =0;
     int temp_hash=hash;
     for(free_distance=0;free_distance<ADD_RANGE; ++free_distance){
@@ -82,33 +73,30 @@ static int add(int key,int data,int flag){
         temp_hash++;
         free_bucket=&B[temp_hash]; //danger
      }
-
-    if( free_distance <ADD_RANGE)
-    {
+    
+    if( free_distance <ADD_RANGE){
         do{
-            if  (free_distance <HOP_RANGE)
-            {
-                start_bucket->hop_info |=(1<< free_distance); // update the hop_info
-                free_bucket->data = data; // update the data with added value
-                free_bucket->key = key; // update key value
-                if(flag) unlock(start_bucket); // unlock the locked structure
+            if  (free_distance <HOP_RANGE){
+                start_bucket->hop_info |=(1<< free_distance);
+                free_bucket->xid_type = xid_type;
+                free_bucket->key = key;
+                if(reentrant) unlock(start_bucket);
                 return 1;
              }
              find_closer_bucket(&free_bucket,&free_distance);
          }while( NULL!= free_bucket);
     }
-
-    if(flag)unlock(start_bucket);
+    if(reentrant)unlock(start_bucket);
     resize();
-    return add(key,data,0);
+    return add(key,xid_type,0);
 }
 
 
-//check for the closest vacant space in the  bucket length
-static void find_closer_bucket(struct Bucket **free_bucket, int * free_distance){
+
+void find_closer_bucket(struct xip_vxt_entry **free_bucket, int * free_distance){
 
 
-    struct Bucket * move_bucket = *free_bucket -(HOP_RANGE -1);
+    struct xip_vxt_entry * move_bucket = *free_bucket -(HOP_RANGE -1);
     if (move_bucket<(&B[0])) move_bucket=&B[0];
     int free_dist;
     for(free_dist = (HOP_RANGE -1); free_dist>0;--free_dist){
@@ -125,13 +113,13 @@ static void find_closer_bucket(struct Bucket **free_bucket, int * free_distance)
         if (-1!=move_free_distance){
             lock(move_bucket);
             if (start_hop_info ==  move_bucket->hop_info){
-                struct Bucket * new_free_bucket = move_bucket + move_free_distance;
+                struct xip_vxt_entry * new_free_bucket = move_bucket + move_free_distance;
                 move_bucket->hop_info |= (1<<free_dist);
-                (*free_bucket)->data =new_free_bucket->data;
+                (*free_bucket)->xid_type =new_free_bucket->xid_type;
                 (*free_bucket)->key = new_free_bucket->key;
                 ++(move_bucket->timestamp);
                 new_free_bucket->key = BUSY;
-                new_free_bucket->data = BUSY;
+                new_free_bucket->xid_type = BUSY;
                 move_bucket->hop_info &=~(1<< move_free_distance);
                 *free_bucket = new_free_bucket;
                 *free_distance -=free_dist;
@@ -142,34 +130,33 @@ static void find_closer_bucket(struct Bucket **free_bucket, int * free_distance)
         }
         move_bucket++;
     }
-    *free_bucket = NULL;
+    *free_bucket = NULL; 
     *free_distance =0;
 
 
 }
 
 
-static void resize(){
-    //TODO: fill Contruct
+void resize(){
+    //TODO: fill
     printf(" @resize \n");
 }
 
-//check the value exits in the bucket list 
 int contains(int key){
-
+    
     int hash=key%size;
-    struct Bucket * start_bucket  = &B[hash];
+    struct xip_vxt_entry * start_bucket  = &B[hash];
 
     int try_counter = 0;
     int timestamp;
 
-    //TODO:include the fast path too , fast contains
+    //TODO:include the fast path too
 
     int i;
     int temp_hash=hash;
-    struct Bucket * check_bucket = start_bucket;
+    struct xip_vxt_entry * check_bucket = start_bucket;
     for(i=0;i<HOP_RANGE;++i){
-
+        
         if(key == (check_bucket->key))
             return 1;
         temp_hash++;
@@ -179,11 +166,42 @@ int contains(int key){
 }
 
 
+/*-----------------------------remove function-----*/
+int remove_v(int key){
+    int hash=key%size;
+    struct xip_vxt_entry * start_bucket  = &B[hash];
+    lock(start_bucket);
+    unsigned int hop_info = start_bucket->hop_info;
+    unsigned int mask = 1;
+    int i;
+    for (i= 0;i< HOP_RANGE;++i,mask<<=1) {
+      if(mask & hop_info){
+  			struct xip_vxt_entry* check_bucket = start_bucket+i;
+  			if(key==(check_bucket->key)){
+  				int rc = check_bucket->xid_type;
+  				check_bucket->key=0;
+  				check_bucket->xid_type=0;
+  				start_bucket->hop_info &=~(1<<i);
+  				unlock(start_bucket);
+  				return rc;
+  			}
+  		}
+  	}
+  	unlock(start_bucket);
+  	return 0;
+  }
+
+
+
+
+
+
+
 int main(int argc, char * argv[]){
 
 
-    B=(struct Bucket *)malloc(sizeof(struct Bucket)*2048);
-
+    B=(struct xip_vxt_entry *)malloc(sizeof(struct xip_vxt_entry)*2048);
+    
     //add(12,45,1);
     //add(13,47,1);
     //add(512+12,49,1);
@@ -191,12 +209,12 @@ int main(int argc, char * argv[]){
     for(i=12;i<48;i++) add(i,56,1);
     add(512+12,49,1);
     printf("%d\n",B[12].key);
-    printf("%d\n",contains(12));
+    printf("before remove =%d\n",contains(12));
+    remove_v(12);
+    printf("after remove =%d\n",contains(12));
     printf("%d\n",contains(13));
     printf("%d\n",contains(14));
     printf("%d\n",contains(512+12));
-    for(i=12;i<50;i++) {
-        printf("hash_funtion = %d\n",hash_fuction(i) );
-        printf("i = %d value %d\n",B[i].data ,B[i].key);}
+    for(i=12;i<50;i++) printf("i = %d value %d\n",i,B[i].key);
     return 1;
 }
