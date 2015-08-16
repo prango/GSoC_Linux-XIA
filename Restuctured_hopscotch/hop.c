@@ -4,15 +4,21 @@
 //#include <linux/sockets.h>
 #include <asm/byteorder.h>
 /*#include "lookup3.c" //custum hash fuctions*/
+/*-----------------------------------MACROS----------*/
 
+#define XIP_VXT_TABLE_SIZE 64 //XIP_VXT_TABLE_SIZE
+#define HOP_RANGE 32
+#define ADD_RANGE 256
 int BUSY=-1;
 typedef __be32 xid_type_t;
+
+/*---------------------------------*/
 
 struct xip_vxt_entry{
 
     int key;
     xid_type_t xid_type;
-    int timestamp;
+   
     unsigned int hop_info;
     int lock;
 
@@ -21,18 +27,16 @@ struct xip_vxt_entry{
 
 struct xip_vxt_entry * B;
 
-int size=512;
-int HOP_RANGE = 32;
-int ADD_RANGE = 256;
 
 
 int Hash_Value(int);
-int contains(int);
+int xt_to_vxt_rcu(int);
 void resize();
 void find_closer_bucket(struct xip_vxt_entry **,int *);
+int vxt_unregister_xidty(xid_type_t);
 
 /*static unsigned int Hash_Value(xid_type_t ty){
- return hash=((__be32_to_cpu(ty) & (size-1));
+ return hash=((__be32_to_cpu(ty) & (XIP_VXT_TABLE_SIZE-1));
  } 
 */
 void lock(struct xip_vxt_entry * bucket){
@@ -52,14 +56,14 @@ void unlock(struct xip_vxt_entry * bucket){
 
 //int hash_fuction(int ty)
 
-
-int add(int key,xid_type_t xid_type,int reentrant){
+/*------- vxt_register_xidty ADD the xid_type in the hash tabel-----*/
+int vxt_register_xidty(int key,xid_type_t xid_type,int reentrant){
     
-    int hash=key%size;
+    int hash=key%XIP_VXT_TABLE_SIZE;
     struct xip_vxt_entry * start_bucket = &B[hash];
     if (reentrant) lock(start_bucket);
     
-    if(contains(key)){
+    if(xt_to_vxt_rcu(key)){
         if (reentrant) unlock(start_bucket);
         return 0;
     }
@@ -88,7 +92,7 @@ int add(int key,xid_type_t xid_type,int reentrant){
     }
     if(reentrant)unlock(start_bucket);
     resize();
-    return add(key,xid_type,0);
+    return vxt_register_xidty(key,xid_type,0);
 }
 
 
@@ -117,7 +121,7 @@ void find_closer_bucket(struct xip_vxt_entry **free_bucket, int * free_distance)
                 move_bucket->hop_info |= (1<<free_dist);
                 (*free_bucket)->xid_type =new_free_bucket->xid_type;
                 (*free_bucket)->key = new_free_bucket->key;
-                ++(move_bucket->timestamp);
+                //++(move_bucket->timestamp);
                 new_free_bucket->key = BUSY;
                 new_free_bucket->xid_type = BUSY;
                 move_bucket->hop_info &=~(1<< move_free_distance);
@@ -138,13 +142,14 @@ void find_closer_bucket(struct xip_vxt_entry **free_bucket, int * free_distance)
 
 
 void resize(){
-    //TODO: fill
+    //TODO: Not required when number of principal are limited TAble size can be incresed. After kernel port include code  
     printf(" @resize \n");
 }
 
-int contains(int key){
+/*----------- This fuctions LOOKUP Xid_type int the maps and returns 0 if not found and 1 if found------*/
+int xt_to_vxt_rcu(int key){
     
-    int hash=key%size;
+    int hash=key%XIP_VXT_TABLE_SIZE;
     struct xip_vxt_entry * start_bucket  = &B[hash];
 
     int try_counter = 0;
@@ -166,9 +171,9 @@ int contains(int key){
 }
 
 
-/*-----------------------------remove function-----*/
-int remove_v(int key){
-    int hash=key%size;
+/*-----------------------------vxt_unregister_xidty function with REMOVES the xid @ty from the maps-----*/
+int vxt_unregister_xidty(xid_type_t key){
+    int hash=key%XIP_VXT_TABLE_SIZE;
     struct xip_vxt_entry * start_bucket  = &B[hash];
     lock(start_bucket);
     unsigned int hop_info = start_bucket->hop_info;
@@ -202,19 +207,20 @@ int main(int argc, char * argv[]){
 
     B=(struct xip_vxt_entry *)malloc(sizeof(struct xip_vxt_entry)*2048);
     
-    //add(12,45,1);
-    //add(13,47,1);
-    //add(512+12,49,1);
+    //vxt_register_xidty(12,45,1);
+    //vxt_register_xidty(13,47,1);
+    //vxt_register_xidty(512+12,49,1);
     int i;
-    for(i=12;i<48;i++) add(i,56,1);
-    add(512+12,49,1);
-    printf("%d\n",B[12].key);
-    printf("before remove =%d\n",contains(12));
-    remove_v(12);
-    printf("after remove =%d\n",contains(12));
-    printf("%d\n",contains(13));
-    printf("%d\n",contains(14));
-    printf("%d\n",contains(512+12));
+    for(i=12;i<48;i++) vxt_register_xidty(i,56,1);
+    vxt_register_xidty(512+12,49,1);
+    printf("key = %d\n data = %d,",B[12].key,B[12].xid_type);
+    printf("before vxt_unregister_xidty =%d\n",xt_to_vxt_rcu(12));
+    vxt_unregister_xidty(12);
+    printf("data value =%d\n,",B[12].xid_type);
+    printf("after vxt_unregister_xidty =%d\n",xt_to_vxt_rcu(12));
+    printf("%d\n",xt_to_vxt_rcu(13));
+    printf("%d\n",xt_to_vxt_rcu(14));
+    printf("%d\n",xt_to_vxt_rcu(512+12));
     for(i=12;i<50;i++) printf("i = %d value %d\n",i,B[i].key);
     return 1;
 }
