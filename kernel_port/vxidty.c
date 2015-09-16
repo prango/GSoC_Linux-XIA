@@ -1,146 +1,113 @@
-#include <net/xia_vxidty.h>
+#include <xia_vxidty.h>
 
-/* XXX The current perfect hashing mechanism used here is quite simple and
- * limiting, many sets of XID types are not supported.
- * A better mechanism must be developed.
- */
+/*------- vxt_register_xidty ADD the xid_type in the hash table-----*/
 
-#define ULONG_SIZE_IN_BIT	(sizeof(unsigned long) * 8)
 
-static DEFINE_MUTEX(vxt_mutex);
-static unsigned long allocated_vxt[(XIP_MAX_XID_TYPES + ULONG_SIZE_IN_BIT - 1)
-                                   / ULONG_SIZE_IN_BIT];
 
-static struct xip_vxt_entry map1[XIP_VXT_TABLE_SIZE] __read_mostly;
-static struct xip_vxt_entry map2[XIP_VXT_TABLE_SIZE] __read_mostly;
-const struct xip_vxt_entry *xip_virtual_xid_types __read_mostly = map1;
-
-#define MAP_SIZE_IN_BYTE	(sizeof(map1))
-
-static inline struct xip_vxt_entry *writable_current_map(void)
-{
-    return (struct xip_vxt_entry *)xip_virtual_xid_types;
-}
-
-static inline struct xip_vxt_entry *get_entry_locked(struct xip_vxt_entry *map,
-                                                     xid_type_t ty)
-{
-    BUILD_BUG_ON_NOT_POWER_OF_2(XIP_VXT_TABLE_SIZE);
-    BUILD_BUG_ON(XIP_VXT_TABLE_SIZE < XIP_MAX_XID_TYPES);
-    return &map[__be32_to_cpu(ty) & (XIP_VXT_TABLE_SIZE - 1)];
-}
-
-static inline struct xip_vxt_entry *next_map(void)
-{
-    return xip_virtual_xid_types == map1 ? map2 : map1;
-}
-
-int vxt_register_xidty(xid_type_t ty, uint32_t index)
-{
-    struct xip_vxt_entry *entry, *old_map, *new_map;
-    int ret;
+int vxt_register_xidty(int key,xid_type_t xid_type,int reentrant){
     
-    mutex_lock(&vxt_mutex);
+    int hash=key%XIP_VXT_TABLE_SIZE;
+    struct xip_vxt_entry * start_bucket = &B[hash];
+    if (reentrant) lock(start_bucket); //Lock Bucket
     
-    /* Check that everything is ready. */
-    old_map = writable_current_map(); /* get_entry_locked() requires it. */
-    entry = get_entry_locked(old_map, ty);
-    if (entry->xid_type == ty) {
-        ret = -EEXIST;
-        goto out;
-    } else if (entry->xid_type) {
-        ret = -EINVAL;
-        goto out;
+   
+    if(xt_to_vxt_rcu(key)){
+        if (reentrant) unlock(start_bucket);
+        return 0;
     }
-    ret = find_first_zero_bit(allocated_vxt, XIP_MAX_XID_TYPES);
-    if (ret >= XIP_MAX_XID_TYPES) {
-        ret = -ENOSPC;
-        goto out;
-    }
-    
-    
-    /*make a new map*/
-    struct entry * free_bucket = start_bucket;
+
+    struct xip_vxt_entry * free_bucket = start_bucket;
     int free_distance =0;
-    int temp_hash=hash;//insert hash fuction :TODO
+    int temp_hash=hash;
     for(free_distance=0;free_distance<ADD_RANGE; ++free_distance){
         if((0==free_bucket->key) &&(__sync_bool_compare_and_swap(&(free_bucket->key),0,BUSY))) //danger
             break;
         temp_hash++;
-        free_bucket=&B[temp_hash]; //danger
-    }
+        free_bucket=&B[temp_hash];
+     }
     
     if( free_distance <ADD_RANGE){
         do{
             if  (free_distance <HOP_RANGE){
                 start_bucket->hop_info |=(1<< free_distance);
-                free_bucket->data = data;
+                free_bucket->xid_type = xid_type;
                 free_bucket->key = key;
                 if(reentrant) unlock(start_bucket);
                 return 1;
-            }
-            find_closer_bucket(&free_bucket,&free_distance);
-        }while( NULL!= free_bucket);
+             }
+             find_closer_bucket(&free_bucket,&free_distance);
+         }while( NULL != free_bucket);
     }
-    //if(reentrant)unlock(start_bucket); //diff lock mechanism
+    if(reentrant)unlock(start_bucket);
     resize();
-    return add(key,data);
-    
-    
-    /* Cook a new map.
-    __set_bit(ret, allocated_vxt);
-    new_map = next_map();
-    memmove(new_map, old_map, MAP_SIZE_IN_BYTE);
-    entry = get_entry_locked(new_map, ty);
-    entry->xid_type = ty;
-    entry->index = ret;
-     */
-    
-    /* Publish the new map. */
-    rcu_assign_pointer(xip_virtual_xid_types, new_map);
-    synchronize_rcu();
-    
-out:
-    mutex_unlock(&vxt_mutex);
-    return ret;
+    return vxt_register_xidty(key,xid_type,0);
 }
-EXPORT_SYMBOL_GPL(vxt_register_xidty);
 
-int vxt_unregister_xidty(xid_type_t ty)
-{
-    struct xip_vxt_entry *entry, *old_map, *new_map;
-    int ret;
-    
-    mutex_lock(&vxt_mutex);
-    
-    /* Check that everything is ready. */
-    old_map = writable_current_map(); /* get_entry_locked() requires it. */
-    entry = get_entry_locked(old_map, ty);
-    if (entry->xid_type != ty) {
-        ret = -EINVAL;
-        goto out;
+void find_closer_bucket(struct xip_vxt_entry **free_bucket, int * free_distance){
+
+
+    struct xip_vxt_entry * move_bucket = *free_bucket -(HOP_RANGE -1);
+    if (move_bucket<(&B[0])) move_bucket=&B[0];
+    int free_dist;
+    for(free_dist = (HOP_RANGE -1); free_dist>0;--free_dist){
+        unsigned start_hop_info = move_bucket->hop_info;
+        int move_free_distance =-1;
+        unsigned int mask =1;
+        int i;
+        for(i=0;i<free_dist; ++i,mask<<=1){
+            if (mask &start_hop_info){
+                move_free_distance=i;
+                break;
+            }
+        }
+        if (-1!=move_free_distance){
+            lock(move_bucket);
+            if (start_hop_info ==  move_bucket->hop_info){
+                struct xip_vxt_entry * new_free_bucket = move_bucket + move_free_distance;
+                move_bucket->hop_info |= (1<<free_dist);
+                (*free_bucket)->xid_type =new_free_bucket->xid_type;
+                (*free_bucket)->key = new_free_bucket->key;
+                //++(move_bucket->timestamp);
+                new_free_bucket->key = BUSY;
+                new_free_bucket->xid_type = BUSY;
+                move_bucket->hop_info &=~(1<< move_free_distance);
+                *free_bucket = new_free_bucket;
+                *free_distance -=free_dist;
+                unlock(move_bucket);
+                return;
+            }
+            unlock(move_bucket);
+        }
+        move_bucket++;
     }
-    ret = 0;
-    
-    /* Cook a new map. */
-    BUG_ON(!__test_and_clear_bit(entry->index, allocated_vxt));
-    new_map = next_map();
-    memmove(new_map, old_map, MAP_SIZE_IN_BYTE);
-    entry = get_entry_locked(new_map, ty);
-    memset(entry, 0, sizeof(*entry));
-    
-    /* Publish the new map. */
-    rcu_assign_pointer(xip_virtual_xid_types, new_map);
-    synchronize_rcu();
-    
-out:
-    mutex_unlock(&vxt_mutex);
-    return ret;
-}
-EXPORT_SYMBOL_GPL(vxt_unregister_xidty);
+    *free_bucket = NULL; 
+    *free_distance = 0;
 
-void resize()
-{
-    //TODO :write resize
+
 }
+
+/*-----------------------------vxt_unregister_xidty function with REMOVES the xid @ty used as key here  from the maps-----*/
+int vxt_unregister_xidty(xid_type_t key){
+    int hash=key%XIP_VXT_TABLE_SIZE;
+    struct xip_vxt_entry * start_bucket  = &B[hash];
+    lock(start_bucket);
+    unsigned int hop_info = start_bucket->hop_info;
+    unsigned int mask = 1;
+    int i;
+    for (i= 0;i< HOP_RANGE;++i,mask<<=1) {
+      if(mask & hop_info){
+  			struct xip_vxt_entry* check_bucket = start_bucket+i;
+  			if(key==(check_bucket->key)){
+  				int rc = check_bucket->xid_type;
+  				check_bucket->key=0;
+  				check_bucket->xid_type=0;
+  				start_bucket->hop_info &=~(1<<i);
+  				unlock(start_bucket);
+  				return rc;
+  			}
+  		}
+  	}
+  	unlock(start_bucket);
+  	return 0;
+  }
 

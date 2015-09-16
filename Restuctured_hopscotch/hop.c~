@@ -3,7 +3,7 @@
 //#include<net/xia.h>
 
 
-#define size 64 //size
+#define XIP_VXT_TABLE_SIZE	64 //size
 #define HOP_RANGE = 32;
 #define ADD_RANGE = 256; //geeting the full alphabet space for hexadecimal
 
